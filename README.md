@@ -1,8 +1,8 @@
 # DNA Methylation Analysis Pipeline (R & Python) 🧬
 
-Hi there! 👋 Welcome to my DNA methylation analysis repository. 
+Hi there! 👋 Welcome to my DNA methylation analysis repository.
 
-I built this pipeline to process, analyze, and visualize DNA methylation microarray data (Illumina Infinium 450k/EPIC). Because computational reproducibility is crucial in bioinformatics, I developed the primary workflow in **R (Bioconductor)** and independently replicated the exploratory and Quality Control (QC) steps in **Python**. 
+I built this pipeline to process, analyze, and visualize DNA methylation microarray data (Illumina Infinium 450k/EPIC). Because computational reproducibility is crucial in bioinformatics, I developed the primary workflow in **R (Bioconductor)** and independently replicated the exploratory and Quality Control (QC) steps in **Python**.
 
 This dual-language approach ensures that the results are robust and not just an artifact of a specific programming environment.
 
