@@ -1,0 +1,301 @@
+---
+title: "12qproject"
+author: "MOHAMMADAMIN ROSHAN"
+date: "2026-07-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# dna methylation analysis project
+# step-by-step pipeline for tasks 1 to 12
+
+# clear the environment and load required packages
+rm(list=ls())
+library(minfi)
+library(limma)
+library(gplots)
+library(qqman)
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+
+# set working directory to the project folder
+baseDir <- "C:/Users/LENOVO/Desktop/admission university/DRD/project/R/project 2"
+setwd(baseDir)
+
+# create a results folder if it doesn't exist already
+if (!dir.exists("results")) {
+  dir.create("results")
+}
+
+# read the sample sheet
+targets <- read.metharray.sheet(baseDir, pattern = "Samplesheet_report_2024.csv")
+
+
+# --- task 1: load raw data with minfi and create RGset ---
+RGset <- read.metharray.exp(targets = targets)
+
+
+# --- task 2: create red and green dataframes ---
+Red <- data.frame(getRed(RGset))
+Green <- data.frame(getGreen(RGset))
+
+
+# --- task 3: get fluorescences for our specific probe address ---
+address_id <- "18756452"
+red_val <- Red[rownames(Red) == address_id, ]
+green_val <- Green[rownames(Green) == address_id, ]
+
+# make a simple table for the report
+task3_table <- data.frame(
+  Sample = colnames(Red),
+  Red_fluor = as.numeric(red_val),
+  Green_fluor = as.numeric(green_val),
+  Type = "Type II",        # checked from manifest
+  Color = "Both (Type II)" # type II probes use both channels
+)
+
+write.csv(task3_table, "results/Task3_Table.csv", row.names = FALSE)
+print("task 3 table:")
+print(task3_table)
+
+
+# --- task 4: create the raw mset object ---
+MSet.raw <- preprocessRaw(RGset)
+
+
+# --- task 5: quality checks (qc plot, negative controls, detection p-values) ---
+# plot qc
+png("results/Task5_QCplot.png", width=800, height=800, res=150)
+qc <- getQC(MSet.raw)
+plotQC(qc)
+dev.off()
+
+# plot negative controls
+png("results/Task5_NegativeControls.png", width=1200, height=600, res=150)
+controlStripPlot(RGset, controls="NEGATIVE")
+dev.off()
+
+# calculate detection p-values and count failed probes (p > 0.01)
+# --- QC NOTE: Detection P-value Threshold ---
+# We use a strict threshold of p < 0.01 to rigorously identify and count low-quality probes for QC reporting.
+# However, in accordance with minfi package requirements and the professor's guidelines, 
+# we DO NOT physically remove these failed probes from the RGset at this stage. 
+# Normalization algorithms like preprocessQuantile() require intact matrices and do not tolerate missing probes.
+# Thus, this step is purely for QC evaluation, and the total probe count remains intact for downstream FDR/Bonferroni correction.
+
+detP <- detectionP(RGset)
+failed_positions <- colSums(detP > 0.01)
+
+task5_table <- data.frame(
+  Sample = colnames(detP),
+  n_Failed_positions = failed_positions
+)
+
+write.csv(task5_table, "results/Task5_FailedPositions.csv", row.names = FALSE)
+print("task 5 table (failed positions):")
+print(task5_table)
+
+
+# --- task 6: raw beta and m values & plotting densities ---
+beta_raw <- getBeta(MSet.raw)
+M_raw <- getM(MSet.raw)
+
+# separate samples into two groups based on the targets file
+group1_cols <- targets$Group == "WT"  
+group2_cols <- targets$Group == "MUT" 
+
+# calculate row means for each group
+beta_mean_group1 <- rowMeans(beta_raw[, group1_cols], na.rm = TRUE)
+beta_mean_group2 <- rowMeans(beta_raw[, group2_cols], na.rm = TRUE)
+
+M_mean_group1 <- rowMeans(M_raw[, group1_cols], na.rm = TRUE)
+M_mean_group2 <- rowMeans(M_raw[, group2_cols], na.rm = TRUE)
+
+png("results/Task6_MeanDensities.png", width=1200, height=600, res=150)
+par(mfrow=c(1,2))
+
+# beta means density plot
+plot(density(beta_mean_group1[is.finite(beta_mean_group1)]), col="blue", main="density of mean beta values", xlab="beta", lwd=2)
+lines(density(beta_mean_group2[is.finite(beta_mean_group2)]), col="red", lwd=2)
+legend("topright", legend=c("WT", "MUT"), col=c("blue", "red"), lty=1, lwd=2)
+
+# m means density plot
+plot(density(M_mean_group1[is.finite(M_mean_group1)]), col="blue", main="density of mean m values", xlab="m value", lwd=2)
+lines(density(M_mean_group2[is.finite(M_mean_group2)]), col="red", lwd=2)
+legend("topright", legend=c("WT", "MUT"), col=c("blue", "red"), lty=1, lwd=2)
+dev.off()
+
+
+# --- task 7: quantile normalization and 6-panel plot ---
+GMSet.norm <- preprocessQuantile(RGset)
+beta_norm <- getBeta(GMSet.norm)
+
+# find type I probes
+probe_I <- getProbeInfo(RGset, type = "I")$Name
+is_type_I <- rownames(beta_raw) %in% probe_I
+
+# prepare stats for the 6 panels
+mean_beta_raw_I <- rowMeans(beta_raw[is_type_I, ], na.rm=TRUE)
+mean_beta_raw_II <- rowMeans(beta_raw[!is_type_I, ], na.rm=TRUE)
+sd_beta_raw_I <- apply(beta_raw[is_type_I, ], 1, sd, na.rm=TRUE)
+sd_beta_raw_II <- apply(beta_raw[!is_type_I, ], 1, sd, na.rm=TRUE)
+
+mean_beta_norm_I <- rowMeans(beta_norm[is_type_I, ], na.rm=TRUE)
+mean_beta_norm_II <- rowMeans(beta_norm[!is_type_I, ], na.rm=TRUE)
+sd_beta_norm_I <- apply(beta_norm[is_type_I, ], 1, sd, na.rm=TRUE)
+sd_beta_norm_II <- apply(beta_norm[!is_type_I, ], 1, sd, na.rm=TRUE)
+
+# assign colors for the boxplot based on groups
+box_colors <- ifelse(targets$Group == "WT", "dodgerblue", "firebrick")
+
+png("results/Task7_6PanelPlot.png", width=1500, height=1000, res=150)
+par(mfrow=c(2,3))
+
+# raw data panels (top row)
+plot(density(mean_beta_raw_I, na.rm=TRUE), col="blue", main="raw: mean beta by type", xlab="beta")
+lines(density(mean_beta_raw_II, na.rm=TRUE), col="red")
+
+plot(density(sd_beta_raw_I, na.rm=TRUE), col="blue", main="raw: sd beta by type", xlab="sd")
+lines(density(sd_beta_raw_II, na.rm=TRUE), col="red")
+
+boxplot(beta_raw, col=box_colors, main="raw: beta values boxplot", las=2, cex.axis=0.7)
+
+# normalized data panels (bottom row)
+plot(density(mean_beta_norm_I, na.rm=TRUE), col="blue", main="norm: mean beta by type", xlab="beta")
+lines(density(mean_beta_norm_II, na.rm=TRUE), col="red")
+
+plot(density(sd_beta_norm_I, na.rm=TRUE), col="blue", main="norm: sd beta by type", xlab="sd")
+lines(density(sd_beta_norm_II, na.rm=TRUE), col="red")
+
+boxplot(beta_norm, col=box_colors, main="norm: beta values boxplot", las=2, cex.axis=0.7)
+dev.off()
+
+
+# --- task 8: pca on the normalized beta values (group, sex, batch) ---
+# calculate pca once
+pca <- prcomp(t(na.omit(beta_norm)), scale. = TRUE)
+pca_vars <- summary(pca)$importance[2, 1:2] * 100
+
+# 1. pca colored by group
+group_factor <- as.factor(targets$Group)
+group_colors <- ifelse(targets$Group == "WT", "dodgerblue", "firebrick")
+
+png("results/Task8_PCA_Group.png", width=1000, height=800, res=150)
+plot(pca$x[,1], pca$x[,2], col=group_colors, pch=16, cex=1.5,
+     xlab=paste0("PC1 (", round(pca_vars[1],1), "%)"),
+     ylab=paste0("PC2 (", round(pca_vars[2],1), "%)"),
+     main="pca of normalized beta values (by group)")
+legend("topright", legend=levels(group_factor), fill=c("dodgerblue", "firebrick"))
+dev.off()
+
+# 2. pca colored by sex
+sex_factor <- as.factor(targets$Sex)
+sex_palette <- c("mediumseagreen", "mediumorchid") # custom colors for sex
+sex_colors <- sex_palette[as.numeric(sex_factor)]
+
+png("results/Task8_PCA_Sex.png", width=1000, height=800, res=150)
+plot(pca$x[,1], pca$x[,2], col=sex_colors, pch=16, cex=1.5,
+     xlab=paste0("PC1 (", round(pca_vars[1],1), "%)"),
+     ylab=paste0("PC2 (", round(pca_vars[2],1), "%)"),
+     main="pca of normalized beta values (by sex)")
+legend("topright", legend=levels(sex_factor), fill=sex_palette)
+dev.off()
+
+# 3. pca colored by batch (using Slide)
+batch_factor <- as.factor(targets$Slide)
+batch_palette <- rainbow(length(levels(batch_factor)))
+batch_colors <- batch_palette[as.numeric(batch_factor)]
+
+png("results/Task8_PCA_Batch.png", width=1000, height=800, res=150)
+plot(pca$x[,1], pca$x[,2], col=batch_colors, pch=16, cex=1.5,
+     xlab=paste0("PC1 (", round(pca_vars[1],1), "%)"),
+     ylab=paste0("PC2 (", round(pca_vars[2],1), "%)"),
+     main="pca of normalized beta values (by batch / Slide)")
+legend("topright", legend=levels(batch_factor), fill=batch_palette, cex=0.8)
+dev.off()
+
+
+# --- task 9: finding differentially methylated probes using t-test ---
+# convert beta to m-values for statistics
+m_values_norm <- log2(beta_norm / (1 - beta_norm))
+design <- model.matrix(~ targets$Group)
+
+fit <- lmFit(m_values_norm, design)
+fit <- eBayes(fit)
+
+# get the t-test results
+dmp_results <- topTable(fit, coef=2, number=Inf, sort.by="P")
+
+
+# --- task 10: multiple testing correction ---
+count_nominal <- sum(dmp_results$P.Value < 0.05, na.rm=TRUE)
+count_bonferroni <- sum(p.adjust(dmp_results$P.Value, method="bonferroni") < 0.05, na.rm=TRUE)
+count_bh <- sum(dmp_results$adj.P.Val < 0.05, na.rm=TRUE)
+
+task10_table <- data.frame(
+  Correction = c("nominal (p < 0.05)", "bonferroni", "bh / fdr"),
+  Significant_Probes = c(count_nominal, count_bonferroni, count_bh)
+)
+
+print("task 10 results:")
+print(task10_table)
+
+
+# --- task 11: volcano and manhattan plots ---
+# volcano plot (using nice colors: tomato for significant, steelblue for non-significant)
+png("results/Task11_VolcanoPlot.png", width=900, height=800, res=150)
+volcano_cols <- ifelse(dmp_results$adj.P.Val < 0.05 & abs(dmp_results$logFC) > 0.5, "tomato", "steelblue")
+plot(dmp_results$logFC, -log10(dmp_results$P.Value), pch=16, cex=0.5, col=volcano_cols,
+     xlab="logFC", ylab="-log10(p-value)", main="volcano plot of dmps")
+abline(h=-log10(0.05), col="darkred", lty=2)
+dev.off()
+
+# formatting data for manhattan plot
+ann <- getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+annotated_dmps <- merge(dmp_results, ann[, c("chr", "pos")], by="row.names")
+
+man_data <- data.frame(
+  SNP = annotated_dmps$Row.names,
+  CHR = as.numeric(gsub("chr", "", annotated_dmps$chr)),
+  BP = annotated_dmps$pos,
+  P = annotated_dmps$P.Value
+)
+man_data <- na.omit(man_data)
+
+# manhattan plot (using highly contrasting colors: dodgerblue4 and darkorange)
+png("results/Task11_ManhattanPlot.png", width=1200, height=600, res=150)
+qqman::manhattan(man_data, main="manhattan plot", suggestiveline=-log10(0.05), genomewideline=FALSE, col=c("dodgerblue4", "darkorange"))
+dev.off()
+
+
+## --- task 12: heatmap of the top 100 significant probes ---
+top100_probes <- rownames(dmp_results)[1:100]
+top100_matrix <- beta_norm[top100_probes, ]
+
+# use sample names for the columns (Corrected from Sample_Name to Sample)
+colnames(top100_matrix) <- targets$Sample
+
+# assign colors for the boxplot/heatmap based on groups (in case it wasn't run right before)
+box_colors <- ifelse(targets$Group == "WT", "dodgerblue", "firebrick")
+
+png("results/Task12_Heatmap_Top100.png", width=1000, height=1000, res=150)
+heatmap.2(top100_matrix, 
+          main="top 100 dmps heatmap",
+          trace="none", 
+          col=bluered(75),
+          scale="row", 
+          ColSideColors=box_colors,
+          labRow=FALSE, # don't show probe IDs because 100 is too crowded
+          cexCol=1.2,   # make sample names a bit larger
+          mar=c(12,4))  # increase bottom margin so long sample names fit perfectly
+dev.off()
+
+print("Heatmap successfully generated !")
+print("pipeline finished :)")
+
+
+```
+
